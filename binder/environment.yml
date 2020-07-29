@@ -6,6 +6,7 @@ dependencies:
  - pangeo-notebook=2020.07.18
  - bokeh=2.0
  - cartopy
+ - cmocean
  - datashader>=0.11
  - descartes
  - esmpy=7.1.0
@@ -61,7 +62,6 @@ dependencies:
  - nc-time-axis
  - xESMF
  - tqdm
- - basemap
  - gsw
  - pip:
    - git+https://github.com/xgcm/xgcm.git

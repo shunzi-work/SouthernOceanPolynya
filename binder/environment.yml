@@ -1,72 +1,47 @@
 name: pangeo
 channels:
  - conda-forge
+ - defaults
 dependencies:
- - python=3.7
- - pangeo-notebook=2020.07.18
+ - esmpy
+ - xesmf
+ - pangeo-notebook
  - bokeh=2.0
- - cartopy
- - cmocean
+ - cartopy=0.18 
  - datashader>=0.11
- - descartes
- - esmpy=7.1.0
  - fsspec
- - gcsfs
- - geopandas
- - geoviews-core
- - h5netcdf
- - h5py
+ - gcsfs 
  - holoviews
  - hvplot
  - intake
  - intake-esm
- - intake-geopandas
- - intake-stac
- - intake-xarray
  - ipywidgets
- - ipyleaflet
  - jupyter-panel-proxy
  - lz4
  - matplotlib
- - matplotlib-base
- - metpy
  - nbserverproxy
  - nomkl
- - numpy
  - numcodecs
- - pandas
+ - numpy
  - panel
- - prefect
- - pydap
  - python-blosc
- - rasterio
- - rio-cogeo
- - s3fs
- - sat-search
- - sat-stac
- - satpy
- - scikit-image
- - scikit-learn
  - scipy
- - sparse
  - tiledb-py
  - xarray
- - xpublish
 # additional packages on top of pangeo notebook
  - zarr
  - eofs
  - xhistogram
  - xrft
+ - xgcm
  - cmip6_preprocessing
  - seaborn
  - nc-time-axis
- - xESMF
- - tqdm
  - gsw
+ - pip
  - pip:
-   - git+https://github.com/xgcm/xgcm.git
-   - git+https://github.com/pydata/xarray.git
    - git+https://github.com/JiaweiZhuang/xESMF.git
    - git+https://github.com/intake/filesystem_spec.git
-   - sat-search
    - seawater
+   - cmocean
+

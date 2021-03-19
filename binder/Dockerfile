@@ -1,1 +1,1 @@
-FROM pangeo/base-image:master
+FROM pangeo/pangeo-notebook:2021.02.02

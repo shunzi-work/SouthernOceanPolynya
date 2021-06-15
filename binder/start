@@ -3,8 +3,10 @@
 # ==== ONLY EDIT WITHIN THIS BLOCK =====
 
 # Import the workspace into JupyterLab
-jupyter lab workspaces import binder/jupyterlab-workspace.json \
-  --NotebookApp.base_url=user/${JUPYTERHUB_USER}
+# jupyter lab workspaces import binder/jupyterlab-workspace.json \
+#   --NotebookApp.base_url=user/${JUPYTERHUB_USER}
+
+export PANGEO_ENV="BINDER_TEMPLATE"
 
 # ==== ONLY EDIT WITHIN THIS BLOCK =====
 

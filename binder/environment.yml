@@ -39,6 +39,7 @@ dependencies:
  - seaborn
  - nc-time-axis
  - gsw
+ - graphviz
  - pip
  - pip:
    - git+https://github.com/JiaweiZhuang/xESMF.git

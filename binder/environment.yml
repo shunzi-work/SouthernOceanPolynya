@@ -4,8 +4,8 @@ channels:
 dependencies:
  - esmpy
  - xesmf
- - pangeo-notebook
- - bokeh=2.0
+ - pangeo-notebook==2021.09.30
+ - bokeh
  - cartopy>=0.18 
  - cmip6_preprocessing
  - datashader>=0.11

@@ -8,6 +8,8 @@ import gcsfs
 import glob
 
 from pyproj import Geod
+from scipy import ndimage
+from skimage.segmentation import flood_fill
 
 def ispickleexists(n, p0):
     p = p0 + n + '.pickle'
@@ -113,14 +115,6 @@ def get_latlon(datapd, i, ds0, newlatlon=False, nolatlon=False):
         dlon = dlon.reset_coords('time_bounds', drop = True)
     return dlat, dlon
 
-def get_south(ds, datapd, i, southlat = -40):
-    if time in ds.dims:
-        dlat, lon = get_latlon(datapd, i, ds.isel(time=0))
-    else:
-        dlat, lon = get_latlon(datapd, i, ds)
-    da_south = ds.where(dlat <= southlat, drop=True)
-    return da_south
-
 def read_areacello(p_nc, name, var):
     # Read cell area nc file
     grid_path = p_nc + var + '_Ofx_' + name + '_*' + '.nc'
@@ -151,15 +145,11 @@ def calculate_area_xy(ds):
     icedata = ds.siconc
     ybnds_name = icedata.dims[1] + '_bnds'
     xbnds_name = icedata.dims[2] + '_bnds'
-    if ybnds_name in ds.data_vars:
-        ybnds = ds[ybnds_name].values
-        xbnds = ds[xbnds_name].values
-    elif ybnds_name in ds.coords:
+    if (ybnds_name in ds.data_vars) or (ybnds_name in ds.coords):
         ybnds = ds[ybnds_name].values
         xbnds = ds[xbnds_name].values
     else:
-        print(ds.data_vars)
-        raise Error("    no coords bnds")
+        raise TypeError("No x/y bnds")
 
     y = ds[icedata.dims[1]].values
     x = ds[icedata.dims[2]].values
@@ -181,8 +171,6 @@ def calculate_area_xy(ds):
     )
     return areadata
 
-# def calculate_area_latlon(lat, lon):
-    
 
 def newxy_fmissingxy(dx, dy):
     dxv = dx.where((dx>-361) & (dx<361)).values
@@ -193,76 +181,65 @@ def newxy_fmissingxy(dx, dy):
     x = np.where(np.isnan(dx), newx, dxv)
     y = np.where(np.isnan(dy), newy, dyv)
     dsx = xr.DataArray(x, dims = dx.dims, coords = dx.coords)
-    dsy = xr.DataArray(x, dims = dx.dims, coords = dx.coords)
+    dsy = xr.DataArray(y, dims = dx.dims, coords = dx.coords)
     return dsx, dsy
 
-# def get_new_xy(d, datapd, j, newlonlat = 0):
-#     if newlonlat:
-#         newlon = d[newlonlat[0]]
-#         newlat = d[newlonlat[1]]
-#     else:
-#         if pd.isna(datapd.at[j, 'latname']):
-#             pltx0 = d[datapd.at[j, 'xname']]
-#             plty0 = d[datapd.at[j, 'yname']]
-#             newlon0, newlat0 = np.meshgrid(pltx0, plty0)
-#             newlon = xr.DataArray(newlon0, dims={datapd.at[j, 'yname']:plty0.values, datapd.at[j, 'xname']:pltx0.values})
-#             newlat = xr.DataArray(newlat0, dims={datapd.at[j, 'yname']:plty0.values, datapd.at[j, 'xname']:pltx0.values})
-#         else:
-#             newlon = d[datapd.at[j, 'lonname']]
-#             newlat = d[datapd.at[j, 'latname']]
-#     if len(np.shape(newlat)) > 2:
-#         newlon = newlon.isel(time = 0)
-#         newlat = newlat.isel(time = 0)
-#     return newlon, newlat
+
+def find_first_non_nan_row(da):
+    """
+    Finds the first row in each column where the value is not NaN.
+    Returns:
+        An xarray DataArray containing the coordinates of the first non-NaN value in each column.
+    """
+    # Find non-NaN values
+    da = da.where(da > 0)
+    not_nan = ~da.isnull()
+    # Get the indices of the first non-NaN value 
+    first_non_nan_indices = not_nan.argmax(da.dims[-2])
+    # Get the corresponding coordinate values
+    first_non_nan_rows = da[da.dims[-2]][first_non_nan_indices]
+    return first_non_nan_rows
 
 
+def detect_polynya(daice, daarea, ice_threshold, area_threshold, buffering = 0):
+    s = ndimage.generate_binary_structure(2,2)
+    da_masked = xr.DataArray(np.nan*np.empty_like(daice), dims = daice.dims, coords = daice.coords)
+    for year in daice.time:
+        ice0 = daice.sel(time = year)
+        icenew = ice0 <= ice_threshold
+        ice = xr.where(np.isnan(ice0), True, icenew)   # get rid of "coastal polynya" 
+        if buffering: # buffering (more layers)
+            b = 0
+            while b<buffering:
+                ice = xr.where(ice0[ice0.dims[-2]] == find_first_non_nan_row(ice0), True, ice) 
+                b+=1
+        labeled_image, num_features = ndimage.label(ice, structure = s)
+        if num_features < 2:
+            continue
+        mask = np.zeros_like(labeled_image)
+        for i in range(1, num_features+1):
+            area = daarea.where(labeled_image == i).sum()/1e6  # m2 -> km2
+            if (area > area_threshold[0]) and (area < area_threshold[1]):  # the area of open 'polynya' within the sea ice extent is small
+                mask[labeled_image == i] = 1
+        da_masked.loc[year] = xr.where(mask, ice0, np.nan)
+    return da_masked #.mean('time'), da_masked.count('time')
 
-# def add_newlatlon(datapd, i, ds):
-#     dlat, lon = get_latlon(datapd, i, ds.isel(time=0))
-#     newlon, newlat = newxy_fmissingxy(dlon, dlat)
-#     ds['newlat'] = (dlat.dims, newlat)
-#     ds['newlon'] = (dlon.dims, newlon)
-#     return ds
 
+def count_polynya_area(ds, ice_threshold, area_threshold, b=0, re=False):
+    masked = detect_polynya(ds.siconc, ds.areacello, ice_threshold, area_threshold, b)
+    polynya_count = masked.count('time')
+    if re:
+        polynya_count = polynya_count.where(polynya_count >= re)
+    return ds.areacello.where(polynya_count > 0).sum().values.item()
 
-
-
-
-
-# # def get_sepsouth(mf, datapd, i, southlat = -40):
-# #     ds = xr.open_mfdataset(mf, use_cftime=True)
-# #     da = ds.siconc
-# #     if 'type' in da.coords:
-# #         da = da.reset_coords('type', drop = True)
-# #     da_sep = da.isel(time=(da.time.dt.month == 9))
-# #     da_south = get_south(da_sep, datapd, i, southlat)
-# #     return da_south
-
-# # def openicenc(p0, datapd, i, southlat = -40):
-# #     data_path = p0 + datapd.at[i, 'source_id'] + '_piControl_' + datapd.at[i, 'member_id'] + '*' + datapd.at[i, 'grid_label'] + '*' + '.nc'
-# #     if datapd.at[i, 'source_id']  == 'NorESM2-LM' or datapd.at[i, 'source_id'] == 'NorESM2-MM':
-# #         data_path = p0 + datapd.at[i, 'source_id'] + '_piControl_' + datapd.at[i, 'member_id'] + '*' + '.nc'
-# #     matching_files = glob.glob(data_path)
-# #     if len(matching_files)>200:    
-# #         for t in range(len(matching_files)):
-# #             da_south = get_sepsouth(matching_files[t], datapd, i, southlat = southlat)
-# #             if t == 0:
-# #                 da_save = da_south.load()
-# #             else:
-# #                 da_save0 = da_south.load()
-# #                 da_save = xr.concat([da_save, da_save0], dim="time")
-# #         da_s = da_save
-# #     else:
-# #         da_south = get_sepsouth(matching_files, datapd, i, southlat = southlat)
-# #         da_s = da_south.load()
-# #     return da_s
 
 def drop_coords(ds):
     for v in ds.coords:
         if v not in ds.dims:
             ds = ds.drop_vars(v)
     return ds
-    
+
+
 def copy_coords(copyfrom, copyto, latname, lonname):
     newd = copyto.assign_coords(
         {
@@ -272,87 +249,71 @@ def copy_coords(copyfrom, copyto, latname, lonname):
     )
     return newd
 
+
 def rename_xy(data_copyfrom, data_copyto):
     new = data_copyto.rename(
         {
-            data_copyto.dims[len(data_copyto.dims)-1]:data_copyfrom.dims[len(data_copyfrom.dims)-1], 
-            data_copyto.dims[len(data_copyto.dims)-2]:data_copyfrom.dims[len(data_copyfrom.dims)-2], 
+            data_copyto.dims[-1]:data_copyfrom.dims[-1], 
+            data_copyto.dims[-2]:data_copyfrom.dims[-2], 
         }
     )
     return new
 
+
 def copy_xy(data_copyfrom, data_copyto):
     data_copyto = rename_xy(data_copyfrom, data_copyto)
-    data_copyto[data_copyto.dims[len(data_copyto.dims)-1]] = data_copyfrom[data_copyfrom.dims[len(data_copyfrom.dims)-1]].values
-    data_copyto[data_copyto.dims[len(data_copyto.dims)-2]] = data_copyfrom[data_copyfrom.dims[len(data_copyfrom.dims)-2]].values
+    data_copyto[data_copyto.dims[-1]] = data_copyfrom[data_copyfrom.dims[-1]].values
+    data_copyto[data_copyto.dims[-2]] = data_copyfrom[data_copyfrom.dims[-2]].values
     return data_copyto
 
 
-# def replace_missingxg(d, datapd, j, newlonlat = 0):
-#     if newlonlat:
-#         lon = d[newlonlat[0]]
-#         lat = d[newlonlat[1]]
-#     else:
-#         lon = d[datapd.at[j, 'lonname']]
-#         lat = d[datapd.at[j, 'latname']]
-#     if 'time' in lat.dims:
-#         lon = lon.isel(time = 0)
-#         lat = lat.isel(time = 0)
-#     newlon, newlat = newxy_fmissingxy(lon, lat)
-#     newd = d.assign_coords(
-#         {
-#             datapd.at[j, 'lonname']: (lon.dims, newlon),
-#             datapd.at[j, 'latname']: (lat.dims, newlat),
-#         }
-#     )
-#     return newd
-
-
-
-# def match_unmatching_grid(icedata, areadata):
-#     newareadata = xr.DataArray(
-#         data=np.empty(icedata.shape[1:])*np.nan,
-#         dims=icedata.dims[1:],
-#         coords={list(icedata.coords)[1]: icedata[list(icedata.coords)[1]], list(icedata.coords)[2]:icedata[list(icedata.coords)[2]]}
-#     )
-#     return newareadata + areadata
-
-def set_nan_to_zero(icedata):
-    ## for E3SM-2-0
-    d0 = icedata.fillna(0)
-    mlat = icedata.idxmin(icedata.dims[1])  ## find the ice extent edge
-    a = d0.where(d0[icedata.dims[1]]>=mlat).where(d0 == 0)
-    newice = xr.where((a>=0)|(icedata>=0), d0, np.nan)
-    return newice
-
-def set_zero_to_nan(icedata):
+def set_land_to_nan(ds):
     ## for GISS, INM-CM4-8
-    dnan = icedata.where(icedata>0)
-    mlat = dnan.idxmin(dnan.dims[len(dnan.dims)-2])  ## find the ice extent edge
-    a = icedata.where(icedata[icedata.dims[len(icedata.dims)-2]]>=mlat).where(icedata == 0)
-    newice = xr.where((a>=0)|(dnan>=0), icedata, np.nan)
+    ice = ds.siconc
+    for t in ice.time:
+        ice0 = ice.sel(time = t)
+        dffill = flood_fill(ice0.values, (0, 0), np.nan, tolerance=0)
+        if ~np.isnan(dffill[-1,-1]):
+            break
+    ice_mask = xr.DataArray(
+        data = dffill,
+        dims = ice0.dims, 
+        coords=ice0.coords
+    )
+    newice = ice.where(~ice_mask.isnull())
+    ds['siconc'] = newice
+    return ds
+
+def set_ocean_to_zero(ds):
+    ## for E3SM-2-0
+    dsnew = ds.siconc.fillna(0)
+    ds['siconc'] = dsnew
+    newice = set_land_to_nan(ds)
     return newice
 
-# def modify_area_grid_to_ice_grid(icedata, areadata):
-#     ## only for 'CAS-ESM2-0'
-#     ## area lon 0~359 ; ice lon 1~360 
-#     ## first modify the lon in areadata
-#     a = areadata.isel({areadata.dims[1]:0})  # select lon=0
-#     a['lon'] = areadata[areadata.dims[1]][-1].values+1  # resign lon = 360 to lon=0 
-#     b = areadata.sel({areadata.dims[1]:slice(1, None)})  # select lon = 1~359
-#     new_area = xr.concat([b, a], dim=areadata.dims[1])  # combine 1~359 & 360
-#     area = copy_coords_xy(icedata, new_area, changename=True)
-#     return area
+def shift_x(da):
+    ## only for 'CAS-ESM2-0'
+    ## area lon 0~359 ; ice lon 1~360 
+    ## first modify the lon in areadata
+    ## NOTE: no need, those two actually match
+    a = da.isel({da.dims[1]:0})  # select lon=0
+    a[da.dims[1]] = da[da.dims[1]][0].values+360  # resign lon = 360 to lon=0 
+    b = da.sel({da.dims[1]:slice(1, None)})  # select lon = 1~359
+    new = xr.concat([b, a], dim=da.dims[1])  # combine 1~359 & 360
+    return new
 
+def change_start_x(ds, newx):
+    lon360 = (ds.newlon+360)%360 - newx
+    if np.abs(lon360[0,0])>5:
+        diffmin = np.argmin(np.abs(lon360[0,:]).values)
+        part_a = ds.isel({lon360.dims[-1]: slice(diffmin, None)})
+        part_b = ds.isel({lon360.dims[-1]: slice(0, diffmin)})
+        newds = xr.concat([part_a, part_b], dim = lon360.dims[-1])
+        return newds
+    else:
+        return ds
 
-# def flip_y(ds):
-#     ## for MPI 
-#     new_y = np.flip(ds[ds.dims[len(ds.dims)-2]])
-#     ds = ds.reindex({ds.dims[len(ds.dims)-2]: new_y})
-#     dsnew = ds.assign_coords(
-#         {
-#             ds.dims[len(ds.dims)-2]: range(0, len(ds[ds.dims[len(ds.dims)-2]]))
-#         }
-#     )
-#     return dsnew
-
+def flip_y(ds):
+    dsa = ds.reindex({ds.dims[-2]: ds[ds.dims[-2]][::-1]})
+    dsnew = dsa.assign_coords({dsa.dims[-2]: ds[ds.dims[-2]]})
+    return dsnew

@@ -6,6 +6,7 @@ import os
 import pickle
 import gcsfs
 import glob
+import gsw
 
 from pyproj import Geod
 from scipy import ndimage
@@ -56,7 +57,7 @@ def select_month(da, n):
     return da.isel(time=(da.time.dt.month == n))
 
 def open_nc_month(mf, month):
-    if len(mf)>50:
+    if len(mf)>5:
         ds = xr.open_mfdataset(mf[0], use_cftime=True)
         ds = select_month(ds, month)
         for i in range(1, len(mf)):
@@ -65,44 +66,58 @@ def open_nc_month(mf, month):
             ds = xr.concat([ds, ds0], dim="time")
         # ds = xr.open_mfdataset(mf, use_cftime=True)
     else:
-        ds = xr.open_mfdataset(mf, use_cftime=True)
+        ds = xr.open_mfdataset(mf, use_cftime=True, chunks={'time': 12})
         ds = select_month(ds, month)
     if 'type' in ds.coords:
         ds = ds.reset_coords('type', drop = True)
     return ds
 
-def read_siconc(p_nc, name, selected_month):
-    data_path = p_nc + 'siconc_' + '*' + name + '_piControl_' + '*' + '.nc'
+def open_nc_month_save_temp(mf, month):
+    for i in range(0, len(mf)):
+        ds0 = xr.open_mfdataset(mf[i], use_cftime=True)
+        ds0 = select_month(ds0, month)
+        ds0.to_netcdf(mf[i].replace('.nc', '_temp.nc'))
+        ds0.close()
+        del ds0
+
+def read_nc_files(p_nc, name, selected_month, dataname):
+    data_path = p_nc + dataname + '_*' + name + '_piControl_' + '*' + '.nc'
     matching_files = glob.glob(data_path)
     if len(matching_files) > 0:
         if selected_month:
-            ds = open_nc_month(matching_files, selected_month) 
+            if  name == 'CanESM5-1':
+                open_nc_month_save_temp(matching_files, selected_month)
+                data_path_new = p_nc + dataname + '_*' + name + '_piControl_' + '*' + '_temp.nc'
+                matching_files_new = glob.glob(data_path_new)
+                ds = open_nc_month(matching_files_new, selected_month)
+            else:
+                ds = open_nc_month(matching_files, selected_month) 
         else:
             ds = open_nc(matching_files)
     else:
-        raise ValueError("    [x] no ice data.")
+        raise ValueError("    [x] no {} data.".format(dataname))
     return ds    
 
-def get_latlon(datapd, i, ds0, newlatlon=False, nolatlon=False):
-    if not nolatlon:
-        nolatlon = pd.isna(datapd.at[i, 'latname'])
-    if nolatlon:
+def get_latlon(data_info, ds0, newlatlon=False, nolatlon=False):
+    if not nolatlon: # default is False (by default, will check again, but if set at true, won't check the table)
+        nolatlon = pd.isna(data_info['latname']) # check again if lat lon exist
+    if nolatlon: # if True, means lat lon doesn't exit
         if newlatlon:
             latname, lonname = newlatlon
         else:
-            latname = datapd.at[i, 'yname']
-            lonname = datapd.at[i, 'xname']
+            latname = data_info['yname']
+            lonname = data_info['xname']
         x = ds0[lonname]
         y = ds0[latname]
         newlon, newlat = np.meshgrid(x, y)
-        dlon = xr.DataArray(newlon, dims={datapd.at[i, 'yname']:y.values, datapd.at[i, 'xname']:x.values})
-        dlat = xr.DataArray(newlat, dims={datapd.at[i, 'yname']:y.values, datapd.at[i, 'xname']:x.values})
+        dlon = xr.DataArray(newlon, dims={latname:y.values, lonname:x.values})
+        dlat = xr.DataArray(newlat, dims={latname:y.values, lonname:x.values})
     else:
         if newlatlon:
             latname, lonname = newlatlon
         else:
-            latname = datapd.at[i, 'latname']
-            lonname = datapd.at[i, 'lonname']
+            latname = data_info['latname']
+            lonname = data_info['lonname']
         dlat = ds0[latname].load()
         dlon = ds0[lonname].load()
         dlat = dlat.where(dlat < 91).where(dlat>-91)
@@ -125,12 +140,12 @@ def read_areacello(p_nc, name, var):
         raise ValueError("    [x] cell area data error.")
     return dsg
 
-def create_new_ds(ice, area, lat, lon):
+def create_new_ds(da, area, lat, lon, daname):
     area_data = area.values
     try:
         new_ds = xr.Dataset(
             data_vars = {
-                'siconc': ice,
+                daname: da,
                 'areacello': (lat.dims, area_data),
                 'newlat': lat,
                 'newlon': lon,
@@ -140,22 +155,22 @@ def create_new_ds(ice, area, lat, lon):
     except Exception as error:
         print("    An exception occurred:", error)
 
-def calculate_area_xy(ds):
+def calculate_area_xy(ds, dataname):
     g = Geod(ellps='sphere')
-    icedata = ds.siconc
-    ybnds_name = icedata.dims[1] + '_bnds'
-    xbnds_name = icedata.dims[2] + '_bnds'
+    dataarray = ds[dataname]
+    ybnds_name = dataarray.dims[-2] + '_bnds'
+    xbnds_name = dataarray.dims[-1] + '_bnds'
     if (ybnds_name in ds.data_vars) or (ybnds_name in ds.coords):
         ybnds = ds[ybnds_name].values
         xbnds = ds[xbnds_name].values
     else:
         raise TypeError("No x/y bnds")
 
-    y = ds[icedata.dims[1]].values
-    x = ds[icedata.dims[2]].values
+    y = ds[dataarray.dims[-2]].values
+    x = ds[dataarray.dims[-1]].values
 
-    dx = np.empty((icedata.shape[1], icedata.shape[2]))*np.nan
-    dy = np.empty((icedata.shape[1], icedata.shape[2]))*np.nan
+    dx = np.empty((dataarray.shape[-2], dataarray.shape[-1]))*np.nan
+    dy = np.empty((dataarray.shape[-2], dataarray.shape[-1]))*np.nan
 
     for i in range(len(x)):
         for j in range(len(y)):
@@ -166,10 +181,50 @@ def calculate_area_xy(ds):
     
     areadata = xr.DataArray(
         data = dx*dy,
-        dims = icedata.dims[1:],
-        coords={list(icedata.dims)[-1]: icedata[list(icedata.dims)[-1]], list(icedata.dims)[-2]:icedata[list(icedata.dims)[-2]]}
+        dims = dataarray.dims[-2:],
+        coords={list(dataarray.dims)[-1]: dataarray[list(dataarray.dims)[-1]], list(dataarray.dims)[-2]:dataarray[list(dataarray.dims)[-2]]}
     )
     return areadata
+
+
+def calculate_area_latlon(ds, dsinfo):
+    ####### vertices of the cells follow the order below
+    #(1)#########(2)
+    #            #
+    #            #
+    #            #
+    #            #
+    #(4)#########(3)
+    g = Geod(ellps='sphere')
+    latvertices_name = 'vertices_' + dsinfo['latname']
+    lonvertices_name = 'vertices_' + dsinfo['lonname']
+    if (latvertices_name in ds.data_vars) or (latvertices_name in ds.coords):
+        latb = ds[latvertices_name].values
+        lonb = ds[lonvertices_name].values
+    else:
+        raise TypeError("No lat/lon bnds")
+
+    lat = ds[dsinfo['latname']].values
+    lon = ds[dsinfo['lonname']].values
+
+    dx = np.empty((lon.shape[0], lon.shape[1]))*np.nan
+    dy = np.empty((lat.shape[0], lat.shape[1]))*np.nan
+
+    for i in range(dy.shape[0]):
+        for j in range(dy.shape[1]):
+            _, _, dy[i,j] = g.inv(lonb[i,j,1], latb[i,j,1], lonb[i,j,2], latb[i,j,2])
+            
+    for i in range(dx.shape[0]):
+        for j in range(dx.shape[1]):
+            _, _, dx[i,j] = g.inv(lonb[i,j,0], latb[i,j,0], lonb[i,j,1], latb[i,j,1])
+            
+    areadata = xr.DataArray(
+        data = dx*dy,
+        dims = ds[dsinfo['latname']].dims,
+        coords={ds[dsinfo['latname']].dims[0]: ds[dsinfo['latname']][ds[dsinfo['latname']].dims[0]], 
+                ds[dsinfo['latname']].dims[1]: ds[dsinfo['latname']][ds[dsinfo['latname']].dims[1]], }
+    )
+    return areadata.where(areadata>0)
 
 
 def newxy_fmissingxy(dx, dy):
@@ -201,32 +256,57 @@ def find_first_non_nan_row(da):
     return first_non_nan_rows
 
 
-def detect_polynya(daice, daarea, ice_threshold, area_threshold, buffering = 0):
+# def detect_polynya(daice, daarea, ice_threshold, area_threshold, buffering = 0):
+#     s = ndimage.generate_binary_structure(2,2)
+#     da_masked = xr.DataArray(np.nan*np.empty_like(daice), dims = daice.dims, coords = daice.coords)
+#     for year in daice.time:
+#         ice0 = daice.sel(time = year)
+#         icenew = ice0 <= ice_threshold
+#         ice = xr.where(np.isnan(ice0), True, icenew)   # get rid of "coastal polynya" 
+#         if buffering: # buffering (more layers)
+#             b = 0
+#             while b<buffering:
+#                 ice = xr.where(ice0[ice0.dims[-2]] == find_first_non_nan_row(ice0), True, ice) 
+#                 b+=1
+#         labeled_image, num_features = ndimage.label(ice, structure = s)
+#         if num_features < 2:
+#             continue
+#         mask = np.zeros_like(labeled_image)
+#         for i in range(1, num_features+1):
+#             area = daarea.where(labeled_image == i).sum()/1e6  # m2 -> km2
+#             if (area > area_threshold[0]) and (area < area_threshold[1]):  # the area of open 'polynya' within the sea ice extent is small
+#                 mask[labeled_image == i] = 1
+#         da_masked.loc[year] = xr.where(mask, ice0, np.nan)
+#     return da_masked #.mean('time'), da_masked.count('time')
+def detect_polynya(da_ice, da_area, ice_threshold, area_threshold, flood_points = [(0,0)], buffering = 15):
+    daice = da_ice.copy()
+    daarea = da_area.copy()
     s = ndimage.generate_binary_structure(2,2)
     da_masked = xr.DataArray(np.nan*np.empty_like(daice), dims = daice.dims, coords = daice.coords)
     for year in daice.time:
-        ice0 = daice.sel(time = year)
-        icenew = ice0 <= ice_threshold
-        ice = xr.where(np.isnan(ice0), True, icenew)   # get rid of "coastal polynya" 
-        if buffering: # buffering (more layers)
-            b = 0
-            while b<buffering:
-                ice = xr.where(ice0[ice0.dims[-2]] == find_first_non_nan_row(ice0), True, ice) 
-                b+=1
-        labeled_image, num_features = ndimage.label(ice, structure = s)
+        ice0_flood = daice.sel(time = year).copy()
+        ice0_flood = ice0_flood.fillna(0).values
+        for flood_point in flood_points: # get rid of coastal
+            ice0_flood = flood_fill(ice0_flood, flood_point, 0, tolerance=buffering)
+        # within sea ice extent
+        ice0_flood = flood_fill(ice0_flood, (ice0_flood.shape[0]-1, ice0_flood.shape[1]-1), 0, tolerance=buffering)
+        
+        icenew = ice0_flood <= ice_threshold
+        labeled_image, num_features = ndimage.label(icenew, structure = s)
         if num_features < 2:
             continue
         mask = np.zeros_like(labeled_image)
         for i in range(1, num_features+1):
-            area = daarea.where(labeled_image == i).sum()/1e6  # m2 -> km2
+            area = daarea.where(labeled_image == i).sum()/1e9  # m2 -> 10^3 km2
             if (area > area_threshold[0]) and (area < area_threshold[1]):  # the area of open 'polynya' within the sea ice extent is small
                 mask[labeled_image == i] = 1
-        da_masked.loc[year] = xr.where(mask, ice0, np.nan)
+        ice_value = daice.sel(time=year).values
+        ice_value[mask == 0] = np.nan
+        da_masked.loc[year] = ice_value
     return da_masked #.mean('time'), da_masked.count('time')
 
-
-def count_polynya_area(ds, ice_threshold, area_threshold, b=0, re=False):
-    masked = detect_polynya(ds.siconc, ds.areacello, ice_threshold, area_threshold, b)
+def count_polynya_area(ds, ice_threshold, area_threshold, flood_points, buffering, re=False):
+    masked = detect_polynya(ds.siconc, ds.areacello, ice_threshold, area_threshold, flood_points = flood_points, buffering = buffering)
     polynya_count = masked.count('time')
     if re:
         polynya_count = polynya_count.where(polynya_count >= re)
@@ -266,7 +346,17 @@ def copy_xy(data_copyfrom, data_copyto):
     data_copyto[data_copyto.dims[-2]] = data_copyfrom[data_copyfrom.dims[-2]].values
     return data_copyto
 
+def regrid_data(da, ds_in, ds_out):
+    import xesmf as xe
+    regridder = xe.Regridder(ds_in, ds_out, "bilinear", periodic=True)
+    da_out = regridder(da)
+    return da_out
 
+def regrid_based_on_dsgxy(da, dsg, dsinfo):
+    ds_in = {dsinfo['xname']: da[dsinfo['xname']].values, dsinfo['yname']: da[dsinfo['yname']].values}
+    ds_out = {dsinfo['xname']: dsg[dsinfo['xname']].values, dsinfo['yname']: dsg[dsinfo['yname']].values}
+    return regrid_data(da, ds_in, ds_out)    
+    
 def set_land_to_nan(ds):
     ## for GISS, INM-CM4-8
     ice = ds.siconc
@@ -317,3 +407,32 @@ def flip_y(ds):
     dsa = ds.reindex({ds.dims[-2]: ds[ds.dims[-2]][::-1]})
     dsnew = dsa.assign_coords({dsa.dims[-2]: ds[ds.dims[-2]]})
     return dsnew
+
+def cal_mld(sigma0, lev = 'lev'):
+    '''
+    Function for calculate mld from density difference (den - den10) and depth
+    Return mixed layer depth 
+    '''
+    b0 = sigma0[lev].where(~sigma0.isnull()).max(dim = lev) ## get bottom topography
+    sigma0_10 = sigma0.interp({lev: 10}) 
+    ## find the deepest layer where den - den10 < 0.03
+    mld0 = sigma0[lev].where(sigma0 - sigma0_10 < 0.03).max(dim = lev)
+    ## find the next layer 
+    mld1 = sigma0[lev].where(sigma0[lev]>mld0).min(lev)
+    cal_min = sigma0.where(sigma0[lev]>=mld0).min(lev) ## density of the shallow layer (this layer den - den10 <= 0.03)
+    cal_max = sigma0.where(sigma0[lev]>=mld1).min(lev) ## density of the deep layer (this layer den - den10 > 0.03)
+
+    ## simple linear interpolation to get the depth where den - den10 = 0.03
+    mld2 = (mld1 - mld0)/(cal_max - cal_min) * (sigma0_10 + 0.03 - cal_min) + mld0 
+    ## if the resulting depth is larger than the deepest depth of the ocean bottom, use the bottom layer 
+    mld = xr.where(mld0 >= b0, b0, mld2)
+    return mld
+
+def check_lev_unit(levname, da):
+    # check unit of depth and convert 
+    # unit: cm --> m
+    if 'units' in da[levname].attrs:
+        if da[levname].attrs == 'centimeters':
+            da[levname] = da[levname]/100
+    return da
+

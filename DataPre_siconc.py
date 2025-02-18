@@ -16,14 +16,18 @@ def save_new_dataset(datapd, p_save, p_nc, selected_month, southlat, dataname, n
             continue
         new_ds_south = get_new_dataset(datapd.iloc[i], p_nc, selected_month, southlat, dataname, newx=newx)
         if isinstance(new_ds_south, xr.Dataset):
-            if name in ['SAM0-UNICON', 'CAS-ESM2-0']:
-                # SAM0-UNICON one year less in mld
-                # CAS-ESM2-0 one year less in mld
+            if (name in ['SAM0-UNICON', 'CAS-ESM2-0']) and (dataname == 'siconc'):
+                # SAM0-UNICON, CAS-ESM2-0 with one year less in mld data than in ice data
                 new_ds_south = new_ds_south.isel(time = slice(0, -1))
             new_ds_south = new_ds_south.load()
             savepickle(name, p_save, new_ds_south)
             print("[*] Saved.")
             gc.collect()
+        tempfile_path = p_nc + '*' + '_temp.nc'
+        matching_files_temp = glob.glob(tempfile_path)
+        if len(matching_files_temp)>0:
+            for mf in matching_files_temp:
+                os.remove(mf)
 
 def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=False):
     # check if mlotst data is avalaible on cloud
@@ -50,10 +54,10 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
     nolatlon = False
     newlatlon = False
 
-    if (dataname == 'siconc') and (name == 'NESM3'):
+    if (dataname in ['siconc', 'sithick']) and (name == 'NESM3'):
         newlatlon = ('lat', 'lon')
 
-    if (dataname in ['mlotst', 'thetao', 'so', 'hfds']) and (name == 'CAS-ESM2-0'):
+    if (dataname in ['mlotst', 'thetao', 'so', 'hfds','tos','sos']) and (name == 'CAS-ESM2-0'):
         nolatlon = True
         newlatlon = ('lat', 'lon')
 
@@ -80,7 +84,7 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
             nameg = 'UKESM1-0-LL'
         else:
             nameg = name
-        if (name == 'NESM3') and (dataname == 'siconc'):
+        if (name == 'NESM3') and (dataname in ['siconc', 'sithick']):
             varname = 'areacelli'
         else:
             varname = 'areacello'
@@ -103,7 +107,7 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
      
     if dlat.shape != dlat_g.shape: # if not the same 
         print('!!!! not the same', end = '')
-        if dataname == 'siconc':
+        if dataname in ['siconc', 'sithick']:
             if name in ['CMCC-CM2-SR5', 'CMCC-ESM2']:
                 dsg_data = dsg_data.isel({dsg_data.dims[-1] : slice(1, len(dsg_data[dsg_data.dims[-1]])-1)})
                 dsg_data = dsg_data.isel({dsg_data.dims[-2] : slice(0, len(dsg_data[dsg_data.dims[-2]])-1)})
@@ -246,6 +250,23 @@ def polynya_detecting_max_mean(datapd, p_count, p_save, p_ice, area_threshold):
         print("[*] saved.")
         gc.collect()
 
+
+def polynya_detecting_fixed(datapd, p_save, p_ice, area_threshold, fixed_num):
+    for i in range(0, len(datapd)):
+        name = datapd.at[i, 'source_id']
+        print("{} {} ... ".format(i, name), end = '')
+        
+        dssiconc = openpickle(name, p_ice)
+
+        if not ispickleexists(name, p_save):
+            mask1 = detect_polynya(dssiconc.siconc, dssiconc.areacello, fixed_num, area_threshold, buffering = 0)
+            savepickle(name, p_save, mask1)
+
+        print("[*] saved.")
+        gc.collect()
+
+
+
 def main():
     # filter some warning messages
     import warnings
@@ -269,7 +290,7 @@ def main():
     print('Count polynya area using different thresholds ...')
 
     ice_thresholds = np.arange(0, 100, step=1)
-    area_threshold = [10, 400]
+    area_threshold = [100, 1000]
     buffering = 15
     count_save = '../../SO_data/data_polynya_count/'
     # count_save = '../../SO_data/data_polynya_count_re/'
@@ -280,6 +301,12 @@ def main():
     print('Start polynya detecting based on the ice threshold that results in maximum area...')
     p_polynya_save = '../../SO_data/data_polynya_max_mean/'
     polynya_detecting_max_mean(datapd, count_save, p_polynya_save, p_ice, area_threshold)
+
+    print()
+    print("Start polynya detecting based on the a fixed thershold...")
+    p_polynya_save_fix = '../../SO_data/data_polynya_60/'
+    fixed_num = 40
+    polynya_detecting_fixed(datapd, p_polynya_save_fix, p_ice, area_threshold, fixed_num)
     
 if __name__ == "__main__":
     main()

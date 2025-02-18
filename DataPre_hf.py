@@ -1,12 +1,12 @@
 ###############
 # 
-# # Python script for CMIP6 hfds data 
-# # preprocessing and mld calculation
+# # Python script for CMIP6 hfds data preprocessing 
 # 
 ###############
 
 from myfunctions import *
 from DataPre_siconc import get_new_dataset, save_new_dataset
+import gc
 
 def main():
     # filter some warning messages

@@ -62,7 +62,7 @@ def main():
     p_mlotst = '../../SO_data/data_mlotst/'
     p_mld = '../../SO_data/data_mld/'
     
-    p_nc = '../../../data/model/CMIP6/'
+    p_nc = '../../data/CMIP6/'
     selected_month = 9
     southlat = -40 
 

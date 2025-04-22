@@ -36,7 +36,7 @@ def main():
     p_sith = '../../SO_data/data_thick/'
     newx = 135
     
-    p_nc = '../../../data/model/CMIP6/'
+    p_nc = '../../data/CMIP6/'
     selected_month = 9
     southlat = -40 
 

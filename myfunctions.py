@@ -8,8 +8,6 @@ import glob
 import gsw
 
 from pyproj import Geod
-from scipy import ndimage
-from skimage.segmentation import flood_fill
 
 def lighten_color(color, amount=0.5):
     """
@@ -294,7 +292,7 @@ def get_latlon(data_info, ds0, newlatlon=False, nolatlon=False):
 
     return dlat, dlon
 
-def read_areacello(p_nc, name, var):
+def read_areacello(p_nc, name, var, data_info):
     """
     Reads the cell area netCDF file based on the provided path, variable, and name.
 
@@ -314,6 +312,13 @@ def read_areacello(p_nc, name, var):
     matching_gfiles = glob.glob(grid_path)
     if len(matching_gfiles)==1:
         dsg = xr.open_mfdataset(matching_gfiles)
+    elif len(matching_gfiles)>1:
+        grid_path = p_nc + var + '_Ofx_' + name + '_*' + data_info['grid_label'] + '*.nc'
+        matching_gfiles = glob.glob(grid_path)
+        if len(matching_gfiles)==1:
+            dsg = xr.open_mfdataset(matching_gfiles)
+        else:
+            raise ValueError("    [x] cell area data error.")
     else:
         raise ValueError("    [x] cell area data error.")
     return dsg
@@ -509,31 +514,7 @@ def find_first_non_nan_row(da):
     first_non_nan_rows = da[da.dims[-2]][first_non_nan_indices]
     return first_non_nan_rows
 
-
-# def detect_polynya(daice, daarea, ice_threshold, area_threshold, buffering = 0):
-#     s = ndimage.generate_binary_structure(2,2)
-#     da_masked = xr.DataArray(np.nan*np.empty_like(daice), dims = daice.dims, coords = daice.coords)
-#     for year in daice.time:
-#         ice0 = daice.sel(time = year)
-#         icenew = ice0 <= ice_threshold
-#         ice = xr.where(np.isnan(ice0), True, icenew)   # get rid of "coastal polynya" 
-#         if buffering: # buffering (more layers)
-#             b = 0
-#             while b<buffering:
-#                 ice = xr.where(ice0[ice0.dims[-2]] == find_first_non_nan_row(ice0), True, ice) 
-#                 b+=1
-#         labeled_image, num_features = ndimage.label(ice, structure = s)
-#         if num_features < 2:
-#             continue
-#         mask = np.zeros_like(labeled_image)
-#         for i in range(1, num_features+1):
-#             area = daarea.where(labeled_image == i).sum()/1e6  # m2 -> km2
-#             if (area > area_threshold[0]) and (area < area_threshold[1]):  # the area of open 'polynya' within the sea ice extent is small
-#                 mask[labeled_image == i] = 1
-#         da_masked.loc[year] = xr.where(mask, ice0, np.nan)
-#     return da_masked #.mean('time'), da_masked.count('time')
-
-def detect_polynya(da_ice, da_area, ice_threshold, area_threshold, flood_points = [(0,0)], buffering = 15):
+def detect_polynya(da_ice, da_area, ice_threshold, area_threshold=(100, 1000), flood_points = [(0,0)], buffering = 15):
     """
     Detects polynyas (areas of open water surrounded by sea ice) in sea ice concentration data.
     Parameters:
@@ -548,6 +529,8 @@ def detect_polynya(da_ice, da_area, ice_threshold, area_threshold, flood_points 
     Returns:
     xarray.DataArray: A masked data array where detected polynyas are retained and other areas are set to NaN.
     """
+    from scipy import ndimage
+    from skimage.segmentation import flood_fill
     # Copy the input data arrays to avoid modifying the original data
     daice = da_ice.copy()
     daarea = da_area.copy()
@@ -626,7 +609,10 @@ def count_polynya_area(ds, ice_threshold, area_threshold, flood_points, bufferin
     polynya_count = masked.count('time')
     if re:
         polynya_count = polynya_count.where(polynya_count >= re)
-    return ds.areacello.where(polynya_count > 0).sum().values.item()
+    area_total = ds.areacello.where(polynya_count > 0).sum().values.item()
+    area_max = ds.areacello.where(masked > 0).sum((ds.areacello.dims[0], ds.areacello.dims[1])).max().values.item()
+    area_mean = ds.areacello.where(masked > 0).sum((ds.areacello.dims[0], ds.areacello.dims[1])).mean().values.item()
+    return [area_total, area_max, area_mean]
 
 
 def drop_coords(ds):
@@ -753,6 +739,7 @@ def set_land_to_nan(ds):
     Returns:
     xarray.Dataset: The modified dataset with land areas set to NaN in the sea ice concentration data.
     """
+    from skimage.segmentation import flood_fill
     ice = ds.siconc
     for t in ice.time:
         ice0 = ice.sel(time = t)

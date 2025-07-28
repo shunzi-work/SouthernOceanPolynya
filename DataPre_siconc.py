@@ -16,13 +16,13 @@ def save_new_dataset(datapd, p_save, p_nc, selected_month, southlat, dataname, n
             continue
         new_ds_south = get_new_dataset(datapd.iloc[i], p_nc, selected_month, southlat, dataname, newx=newx)
         if isinstance(new_ds_south, xr.Dataset):
+            new_ds_south = new_ds_south.sortby('time')
             if (name in ['SAM0-UNICON', 'CAS-ESM2-0']) and (dataname == 'siconc'):
                 # SAM0-UNICON, CAS-ESM2-0 with one year less in mld data than in ice data
                 new_ds_south = new_ds_south.isel(time = slice(0, -1))                
             new_ds_south = new_ds_south.load()
             if selected_month:
                 if len(new_ds_south.time) > 500:
-                    new_ds_south = new_ds_south.sortby('time')
                     if (name in ['SAM0-UNICON']) and (dataname == 'hfds'):
                         new_ds_south = new_ds_south
                     else:
@@ -201,11 +201,11 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
         new_ds_south = set_land_to_nan(new_ds_south) 
 
     ## get rid of blank columns    
-    if dataname in ['siconc','mlotst','hfds']: 
-        while np.isnan(new_ds_south[dataname].isel({new_ds_south[dataname].dims[-1]:0}).isel(time=0)).all():
-            new_ds_south = new_ds_south.isel({new_ds_south[dataname].dims[-1]:slice(1, None)})
-        while np.isnan(new_ds_south[dataname].isel({new_ds_south[dataname].dims[-1]:-1}).isel(time=0)).all():
-            new_ds_south = new_ds_south.isel({new_ds_south[dataname].dims[-1]:slice(0, -1)})
+    # if dataname in ['siconc','mlotst','hfds', 'so', 'sos', 'tos', 'thetao']: 
+    while np.isnan(new_ds_south[dataname].isel({new_ds_south[dataname].dims[-1]:0}).isel(time=0)).all():
+        new_ds_south = new_ds_south.isel({new_ds_south[dataname].dims[-1]:slice(1, None)})
+    while np.isnan(new_ds_south[dataname].isel({new_ds_south[dataname].dims[-1]:-1}).isel(time=0)).all():
+        new_ds_south = new_ds_south.isel({new_ds_south[dataname].dims[-1]:slice(0, -1)})
     
     if (dataname == 'siconc') and (np.isnan(new_ds_south[dataname].isel(time = 0)[-1,-1])):
         ### ['E3SM-2-0', 'E3SM-2-0-NARRM']

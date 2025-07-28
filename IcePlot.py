@@ -237,10 +237,10 @@ def main():
     p_ice = '../../SO_data/data_siconc_w_area/'
     p_count = '../../SO_data/data_polynya_count/'
 
-    # print('Plot histogram ...')
+    print('Plot histogram ...')
     
-    # savename = 'Figures/PolynyaCounts.pdf'
-    # plot_ice_hist(datapd, p_ice, p_count, savename)
+    savename = 'Figures/PolynyaCounts.pdf'
+    plot_ice_hist(datapd, p_ice, p_count, savename)
 
     # print()
     print('Plot polynya maps...')

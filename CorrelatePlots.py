@@ -65,6 +65,9 @@ def main():
     
     pro_df = pd.read_csv('properties.csv')
     pro_df = pro_df.replace(0.0, np.nan)
+
+    pro2_df = pd.read_csv('properties.csv')
+    pro2_df = pro2_df.replace(0.0, np.nan)
     
     datapd = pd.read_csv('List_model.csv')
     typedf = datapd[['source_id', 'type']]
@@ -79,6 +82,15 @@ def main():
         for j in range(1, len(pro_df.columns)):
             if i < j:
                 dfs = pro_df[[pro_df.columns[0], pro_df.columns[i], pro_df.columns[j]]]
+                newdf = pd.merge(typedf, dfs, on="name")
+                plt_df = newdf.dropna()
+                plot_corr(plt_df, marker_dict, color_dict)
+                print(i,j)
+                
+    for i in range(1, len(pro2_df.columns)):
+        for j in range(1, len(pro2_df.columns)):
+            if i < j:
+                dfs = pro_df2[[pro_df2.columns[0], pro_df2.columns[i], pro_df2.columns[j]]]
                 newdf = pd.merge(typedf, dfs, on="name")
                 plt_df = newdf.dropna()
                 plot_corr(plt_df, marker_dict, color_dict)

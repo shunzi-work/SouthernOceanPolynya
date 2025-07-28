@@ -109,7 +109,6 @@ def main():
         name = df.at[i, 'name']
         print(name, end = '...')
         dsice = openpickle(name, p_ice)
-        daice = dsice.siconc
         dspolynya = openpickle(name, p_polynya)
 
         damld, dsmld = open_mld(p_mlotst, p_mld, name)
@@ -121,14 +120,14 @@ def main():
         convection_area_ann = dsmld.areacello.where(damld>=2000).sum((dsmld.areacello.dims[0], dsmld.areacello.dims[1]))/1e12
         if (polynya_area_ann == 0).all():
             print("no polynya", end = '...')
-            p_result = [np.nan, np.nan]
+            p_results = [np.nan, np.nan]
         else:
             p_results = calculate_max_ps(polynya_area_ann)
         for p in p_results:
             ps.append(p)
         if (convection_area_ann == 0).all():
             print("no convection", end = '...')
-            c_result = [np.nan, np.nan]
+            c_results = [np.nan, np.nan]
         else:
             c_results = calculate_max_ps(convection_area_ann)
         for c in c_results:

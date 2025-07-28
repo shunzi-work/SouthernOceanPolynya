@@ -169,14 +169,9 @@ def main():
         gc.collect()
         name = datapd.at[i, 'source_id']
         print(">>> {} {}".format(i, name), end = '...')
-        data_save_path
 
         if ispickleexists(name, data_save_path):
             print("done.")
-            continue
-
-        if name == 'NESM3':
-            print("skip NESM3.")
             continue
         
         dsice = openpickle(name, p_ice)
@@ -200,12 +195,15 @@ def main():
             print("no c and no p.")
             continue
 
+        
         if (damld.dims[-1] != dspolynya.dims[-1]) or (damld.dims[-2] != dspolynya.dims[-2]):
             print(damld.dims, dspolynya.dims, end = '...')
             if len(damld[damld.dims[-1]]) == len(dspolynya[dspolynya.dims[-1]]):
                 dspolynya = copy_xy(damld, dspolynya)
                 daice = copy_xy(damld, daice)
                 print("copy dims to ice grid")
+            else:
+                print("cords have different size")
 
         if not check_timerange(dsice, damld):
             print("[!] c and p time range different.")
@@ -215,27 +213,39 @@ def main():
         convection_area_ann = dsmld.areacello.where(damld>=2000).sum((dsmld.areacello.dims[0], dsmld.areacello.dims[1]))/1e12
         
         ds = xr.Dataset({'polynya_area_ann': polynya_area_ann, 'convection_area_ann': convection_area_ann})
+        print("sic", end = '...')
         ds['sic_convection'] = get_region(daice, c_area, "convection")
-        ds['sic_diff_convection'] = get_region_diff(daice, dsmld.newlat, c_area, "convection")
         ds['sic_polynya'] = get_region(daice, p_area, "polynya")
-        ds['sic_diff_polynya'] = get_region_diff(daice, dsmld.newlat, p_area, "polynya")
+        
+        ds['sic_diff_convection'] = get_region_diff(daice, dsice.newlat, c_area, "convection")
+        ds['sic_diff_polynya'] = get_region_diff(daice, dsice.newlat, p_area, "polynya")
 
+        print("mld", end = '...')
         ds['mld_convection'] = get_region(damld, c_area, "convection")
         ds['mld_diff_convection'] = get_region_diff(damld, dsmld.newlat, c_area, "convection")
         ds['mld_polynya'] = get_region(damld, p_area, "polynya")
         ds['mld_diff_polynya'] = get_region_diff(damld, dsmld.newlat, p_area, "polynya")
 
-        for varname in var_names: 
+        for varname in var_names:
+            print(varname, end='...')
             var = readvardata(varname, name, data_path_pre, damld)
             if isinstance(var, xr.DataArray):
                 ds[varname+ '_polynya'] = get_region(var, p_area, "polynya")
                 ds[varname + '_convection'] = get_region(var, c_area, "convection")
-                ds[varname + '_diff_polynya'] = get_region_diff(var, dsmld.newlat, p_area, "polynya")
-                ds[varname + '_diff_convection'] = get_region_diff(var, dsmld.newlat, c_area, "convection")
+                if varname == 'thick':
+                    ds[varname + '_diff_polynya'] = get_region_diff(var, dsice.newlat, p_area, "polynya")
+                    ds[varname + '_diff_convection'] = get_region_diff(var, dsice.newlat, c_area, "convection")
+                else:
+                    ds[varname + '_diff_polynya'] = get_region_diff(var, dsmld.newlat, p_area, "polynya")
+                    ds[varname + '_diff_convection'] = get_region_diff(var, dsmld.newlat, c_area, "convection")
             else:
                 print("[!] {} data not found.".format(varname))
             del var
             gc.collect()
+
+        for t in ds:
+            if not isinstance(ds[t], xr.DataArray):
+                ds.drop_vars(t)
         
         savepickle(name, data_save_path, ds)
         print('')

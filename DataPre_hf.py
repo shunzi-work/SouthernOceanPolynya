@@ -17,11 +17,11 @@ def main():
     p_hfds = '../../SO_data/data_hfds/'
     
     
-    p_nc = '../../../data/model/CMIP6/'
+    p_nc = '../../data/CMIP6/'
     selected_month = 9
     southlat = -40 
 
-    print('Start mlotst data preprocessing ...')
+    print('Start data preprocessing ...')
     save_new_dataset(datapd, p_hfds, p_nc, selected_month, southlat, 'hfds')
     
 

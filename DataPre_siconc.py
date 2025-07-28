@@ -20,8 +20,13 @@ def save_new_dataset(datapd, p_save, p_nc, selected_month, southlat, dataname, n
                 # SAM0-UNICON, CAS-ESM2-0 with one year less in mld data than in ice data
                 new_ds_south = new_ds_south.isel(time = slice(0, -1))                
             new_ds_south = new_ds_south.load()
-            if len(new_ds_south.time) > 500:
-                new_ds_south = new_ds_south.isel(time = slice(-500, None))
+            if selected_month:
+                if len(new_ds_south.time) > 500:
+                    new_ds_south = new_ds_south.sortby('time')
+                    if (name in ['SAM0-UNICON']) and (dataname == 'hfds'):
+                        new_ds_south = new_ds_south
+                    else:
+                        new_ds_south = new_ds_south.isel(time = slice(-500, None))
             savepickle(name, p_save, new_ds_south)
             print("[*] Saved.")
             gc.collect()
@@ -38,12 +43,23 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
     if pd.isna(data_info[datastorename]):
         try:
             ds = read_nc_files(p_nc, name, selected_month, dataname)
+            ds = ds.sortby('time')
         except Exception as e:
             print(e)
             return None
     else:
-        ds = open_from_cloud(data_info[datastorename])
-        ds = select_month(ds, selected_month)
+        if data_info[datastorename][0:2] == 'gs':
+            ds = open_from_cloud(data_info[datastorename]) 
+            if selected_month:
+                ds = select_month(ds, selected_month)
+        else:
+            datafile_paths = data_info[datastorename] + '*'
+            matching_files = glob.glob(datafile_paths)
+            if selected_month:
+                ds = open_nc_month(matching_files, selected_month)
+            else:
+                ds = open_nc(matching_files)
+            
 
     dataarray = ds[dataname]
     if dataname == 'siconc':
@@ -52,6 +68,13 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
         dataarray = dataarray.where(dataarray>=0).where(dataarray<100)
     elif dataname == 'thetao':
         dataarray = dataarray.where(dataarray!=0).where(dataarray<100)
+    elif dataname == 'hfds':
+        if name == 'CAS-ESM2-0':
+            # https://errata.ipsl.fr/static/view.html?uid=34c23dd3-2aac-f635-8538-eaf110e83611
+            # All the hfds data are saved as K/s instead of W/m2, they 
+            # should be multiplied by factor of 4.1*10^7 for unit 
+            # conversion from K/s to W/m2
+            dataarray = dataarray * 4.1e7
 
     nolatlon = False
     newlatlon = False
@@ -220,37 +243,22 @@ def count_area_diff_thresholds(datapd, ice_thresholds, area_threshold, buffering
             print("[*] saved.")
             gc.collect()
 
-def polynya_detecting_max_mean(datapd, p_count, p_save, p_ice, area_threshold):
+def polynya_detecting_mean(datapd, p_count, p_save, p_ice, area_threshold):
     for i in range(0, len(datapd)):
         name = datapd.at[i, 'source_id']
         print("{} {} ....".format(i, name), end = ' ')
-        
-        ds = openpickle(name, p_count)
-        iceth = np.argmax(ds[1:])+1 
-        save_name1 = '{}_max_{}'.format(name, iceth)
-        
+                
         dssiconc = openpickle(name, p_ice)
-        ice_mean = (dssiconc.siconc*dssiconc.areacello).sum()/dssiconc.areacello.where(dssiconc.siconc>=0).sum()            
-        ice_mean_not0 = ((dssiconc.siconc.where(dssiconc.siconc>0)*dssiconc.areacello).sum((dssiconc.siconc.dims[-1],dssiconc.siconc.dims[-2]))/dssiconc.areacello.where(dssiconc.siconc>0).sum((dssiconc.siconc.dims[-1],dssiconc.siconc.dims[-2]))).mean()
-
-        save_name2 = '{}_mean_{:.1f}'.format(name, ice_mean.values.item())
-        save_name3 = '{}_meannot0_{:.1f}'.format(name, ice_mean_not0.values.item())
+        # ice_mean = (dssiconc.siconc*dssiconc.areacello).sum()/dssiconc.areacello.where(dssiconc.siconc>=0).sum()            
+        ice_mean_not0 = (dssiconc.siconc.where(dssiconc.siconc.max("time")>0)*dssiconc.areacello).sum()/dssiconc.areacello.where(dssiconc.siconc.max("time")>0).sum()/len(dssiconc.time)
 
         flood_points = [(0,0)]
         if name == "MRI-ESM2-0":
             flood_points = [(0,0), (0,40), (0,100), (0,200)]
 
-        if not ispickleexists(save_name1, p_save):
-            mask1 = detect_polynya(dssiconc.siconc, dssiconc.areacello, iceth, area_threshold, flood_points, buffering = 0)
-            savepickle(save_name1, p_save, mask1)
-            
-        if not ispickleexists(save_name2, p_save):
-            mask2 = detect_polynya(dssiconc.siconc, dssiconc.areacello, ice_mean.values.item(), area_threshold, flood_points, buffering = 0)
-            savepickle(save_name2, p_save, mask2)
-            
-        if not ispickleexists(save_name3, p_save):
-            mask3 = detect_polynya(dssiconc.siconc, dssiconc.areacello, ice_mean_not0.values.item(), area_threshold, flood_points, buffering = 0)
-            savepickle(save_name3, p_save, mask3)
+        if not ispickleexists(name, p_save):
+            mask = detect_polynya(dssiconc.siconc, dssiconc.areacello, ice_mean_not0.values.item(), area_threshold, flood_points, buffering = 0)
+            savepickle(name, p_save, mask)
             
         print("[*] saved.")
         gc.collect()
@@ -300,16 +308,16 @@ def main():
     print('Count polynya area using different thresholds ...')
 
     ice_thresholds = np.arange(0, 100, step=1)
-    area_threshold = [100, 1000]
+    area_threshold = [0, 2000]
     buffering = 15
     count_save = '../../SO_data/data_polynya_count/'
     count_area_diff_thresholds(datapd, ice_thresholds, area_threshold, buffering, count_save, p_ice)
 
     print('Finish polynya counting.')
-    # print()
-    # print('Start polynya detecting based on the ice threshold that results in maximum area...')
-    # p_polynya_save = '../../SO_data/data_polynya_max_mean/'
-    # polynya_detecting_max_mean(datapd, count_save, p_polynya_save, p_ice, area_threshold)
+    print()
+    print('Start polynya detecting based on the ice threshold that results in maximum area...')
+    p_polynya_save = '../../SO_data/data_polynya_mean/'
+    polynya_detecting_mean(datapd, count_save, p_polynya_save, p_ice, area_threshold)
 
     print()
     print("Start polynya detecting based on the a fixed thershold...")

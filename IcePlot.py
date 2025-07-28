@@ -21,8 +21,9 @@ def calculate_mean_ice(ice, area):
     return (ice*area).sum()/area.where(ice>=0).sum()
 
 def calculate_pmean_ice(ice, area):
-    return (ice.where(ice>0)*area).sum()/area.where(ice>0).sum()
-    
+    icemax = ice.max("time")
+    mean = (ice.where(icemax>0)*area).sum()/(area.where(icemax>0)).sum()/len(ice.time)
+    return mean
 
 def plot_ice_hist(datapd, pice, p_count, savename, figsize=(6.5, 7)):
     fig = plt.figure(figsize=figsize)
@@ -37,9 +38,9 @@ def plot_ice_hist(datapd, pice, p_count, savename, figsize=(6.5, 7)):
             ice_mean = calculate_mean_ice(dssiconc.siconc, dssiconc.areacello)
             ice_mean_not0 = calculate_pmean_ice(dssiconc.siconc, dssiconc.areacello)
      
-            ax = fig.add_subplot(11, 5, n)
+            ax = fig.add_subplot(10, 5, n)
             plt.subplots_adjust(left=0.015,
-                                bottom=0.045, 
+                                bottom=0.055, 
                                 right=0.985, 
                                 top=0.99, 
                                 wspace=0.08, 
@@ -61,10 +62,10 @@ def plot_ice_hist(datapd, pice, p_count, savename, figsize=(6.5, 7)):
             
             pa = ax.plot(ice_thresholds[:], ds[:,0]/np.max(ds[:]), linewidth = 1, 
                          color = 'b', label = 'polynya area')
-            pa2 = ax.plot(ice_thresholds[:], ds[:,1]/np.max(ds[:]), linewidth = 1, 
-                         color = 'r', label = 'polynya area')
-            pa3 = ax.plot(ice_thresholds[:], ds[:,2]/np.max(ds[:]), linewidth = 1, 
-                         color = 'y', label = 'polynya area')
+            # pa2 = ax.plot(ice_thresholds[:], ds[:,1]/np.max(ds[:]), linewidth = 1, 
+            #              color = 'r', label = 'polynya area')
+            # pa3 = ax.plot(ice_thresholds[:], ds[:,2]/np.max(ds[:]), linewidth = 1, 
+            #              color = 'y', label = 'polynya area')
             pc = ax2.axvline(x=ice_mean.values.item(), color = 'g', linestyle = '--',
                             linewidth=1, label = 'mean SIC in SO')
             pe = ax.axvline(x=ice_mean_not0.values.item(), color = 'orange', linestyle = '-.',
@@ -94,7 +95,6 @@ def plot_ice_hist(datapd, pice, p_count, savename, figsize=(6.5, 7)):
     fig.savefig(savename, format='pdf')
 
 
-
 def create_new_color_dict(colors, datapd, typename, lighten = 1):
     types = datapd[typename].unique()
     color_dict = {}
@@ -113,7 +113,8 @@ def modify_map(ax):
     # ax.add_feature(cfeature.COASTLINE, linewidth = 0.5)
     ax.add_feature(cfeature.OCEAN, alpha = 0.15)
     ax.set_boundary(circle, transform=ax.transAxes)
-    ax.spines['geo'].set_linewidth(0.5)
+    # ax.spines['geo'].set_linewidth(0.5)
+    ax.spines['geo'].set_edgecolor(None)
     # ax.gridlines(draw_labels=False, 
     #              ylocs=np.linspace(-90, 90, 7), 
     #              color = 'grey', linestyle = '-.', linewidth = 0.5, alpha = 0.8)
@@ -152,7 +153,7 @@ def get_icemax_polynya(name, p_ice, ice_threshold):
     plt_polynya = mask.count('time').where(mask.count('time')>0)/len(mask.time)
     return pltx, plty, plt_icemax, plt_polynya, len(dsice.time)
 
-def add_supplot_icepolynya(fig, n, name, color, titleonly, reso_text, pltx,plty,plt_icemax,plt_polynya, timelength):
+def add_subplot_icepolynya(fig, n, name, color, titleonly, reso_text, pltx,plty,plt_icemax,plt_polynya, timelength):
     ax = fig.add_subplot(7, 8, n, projection=ccrs.SouthPolarStereo())
     plt.subplots_adjust(left=0.01,
                         bottom=0.01, 
@@ -208,7 +209,7 @@ def plot_polynya_maps(datapd, p_ice, colors, ice_threshold, typename='type_ice',
             reso_text = str(datapd.at[i, 'resolution'])
         else:
             reso_text = None
-        im, im2 = add_supplot_icepolynya(fig, n, name, color_dict[t], titleonly, reso_text, pltx,plty,plt_icemax,plt_polynya, timelength)
+        im, im2 = add_subplot_icepolynya(fig, n, name, color_dict[t], titleonly, reso_text, pltx,plty,plt_icemax,plt_polynya, timelength)
         gc.collect()
     add_cbars(fig, im, im2)
     add_type_color_legend(fig, list(color_dict.keys()),  list(color_dict.values()), 'sea ice module types')
@@ -224,7 +225,7 @@ def add_subplot_text(ax, name, timelength, resotext):
     # title._bbox_patch._mutation_aspect = 1
     # title.get_bbox_patch().set_boxstyle("square", pad=11.9)
     ax.text(0,-90, timelength, fontsize=6, color='w', ha='center')
-    ax.text(180,-60, resotext, fontsize=6, color='w', ha='center')
+    ax.text(180,-55, resotext, transform=ccrs.PlateCarree(), fontsize=6, color='k', ha='center')
 
 
 def main():

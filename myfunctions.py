@@ -610,8 +610,8 @@ def count_polynya_area(ds, ice_threshold, area_threshold, flood_points, bufferin
     if re:
         polynya_count = polynya_count.where(polynya_count >= re)
     area_total = ds.areacello.where(polynya_count > 0).sum().values.item()
-    area_max = ds.areacello.where(masked > 0).sum((ds.areacello.dims[0], ds.areacello.dims[1])).max().values.item()
-    area_mean = ds.areacello.where(masked > 0).sum((ds.areacello.dims[0], ds.areacello.dims[1])).mean().values.item()
+    area_max = ds.areacello.where(polynya_count > 0).sum((ds.areacello.dims[0], ds.areacello.dims[1])).max().values.item()
+    area_mean = ds.areacello.where(polynya_count > 0).sum((ds.areacello.dims[0], ds.areacello.dims[1])).mean().values.item()
     return [area_total, area_max, area_mean]
 
 
@@ -723,7 +723,7 @@ def regrid_based_on_dsgxy(da, dsg, dsinfo):
     ds_in = {dsinfo['xname']: da[dsinfo['xname']].values, dsinfo['yname']: da[dsinfo['yname']].values}
     ds_out = {dsinfo['xname']: dsg[dsinfo['xname']].values, dsinfo['yname']: dsg[dsinfo['yname']].values}
     return regrid_data(da, ds_in, ds_out)    
-    
+
 def set_land_to_nan(ds):
     """
     Sets Antarctic land areas to NaN in the sea ice concentration data.
@@ -844,4 +844,52 @@ def check_lev_unit(levname, da):
         if da[levname].attrs['units'] == 'centimeters':
             da[levname] = da[levname]/100
     return da
+
+def connect_dask_cluster():
+    # Create a PBS cluster object
+    import dask
+    from dask_jobqueue import PBSCluster
+    from dask.distributed import Client
+    cluster = PBSCluster(
+        job_name        = 'dask',
+        queue           = 'casper',
+        walltime        = '20:00:00',
+        log_directory   = 'dask-logs',
+        cores           = 1,
+        memory          = '8GiB',
+        resource_spec   = 'select=1:ncpus=1:mem=8GB',
+        processes       = 1,
+        local_directory = '${SCRATCH}/dask_scratch/pbs.$PBS_JOBID/dask/spill',
+        interface       = 'ext',
+        silence_logs    = 'error',
+    )
+    cluster.adapt(minimum=2, maximum=50)
+    client = Client(cluster)
+    return client, cluster
+
+def ReadDataFromNCAR(url = '/glade/collections/cmip/catalog/intake-esm-datastore/catalogs/glade-cmip6.json', show_only=False, **kwargs):
+    import intake
+    cat = intake.open_esm_datastore(url)
+    query = {}
+    for key, value in kwargs.items():
+        if value is None:
+            continue
+        query[key] = value
+    if 'experiment_id' not in kwargs:
+        query['experiment_id'] = 'piControl'
+    if 'source_id' not in kwargs:
+        query['source_id'] = 'GFDL-CM4'
+    cat_subset = cat.search(**query)
+    if show_only:
+        return cat_subset.df
+    else:
+        if len(cat_subset.df) > 0:
+            dataset = cat_subset.to_dataset_dict()
+            ds = dataset[list(dataset)[0]]
+            ds = ds.isel(member_id=0).reset_coords('member_id', drop = True)
+            ds = ds.isel(dcpp_init_year=0).reset_coords('dcpp_init_year', drop = True)
+            return ds
+        else:
+            print("No Data")
+            return None
 

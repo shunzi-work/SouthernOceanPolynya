@@ -1,6 +1,6 @@
 # ##############
 #
-# # Python script for calculating some properties 
+# # Python script for calculating some properties
 # # reagarding polynya and convection each year
 #
 # ##############
@@ -20,7 +20,8 @@ def calculate_cp_cross_rate(dspolynya, dsice, damld, dsmld):
             cross_area_ann = dsmld.areacello.where(dspolynya>0).where(damld>=2000).sum((dsmld.areacello.dims[0], dsmld.areacello.dims[1]))/1e12
         except Exception as E:
             print(E, end = '...')
-            cross_area_ann = None 
+            cross_area_ann = None
+        
     if isinstance(cross_area_ann, xr.DataArray):
         polynya_area_ann_p = polynya_area_ann.where(polynya_area_ann>0, drop = True)
         cross_area_ann_p = cross_area_ann.sel(time = polynya_area_ann_p.time)

@@ -7,6 +7,7 @@
 from myfunctions import *
 import gc
 
+
 def save_new_dataset(datapd, p_save, p_nc, selected_month, southlat, dataname, newx=False):
     for i in range(0, len(datapd)):
         name = datapd.at[i, 'source_id']
@@ -16,17 +17,7 @@ def save_new_dataset(datapd, p_save, p_nc, selected_month, southlat, dataname, n
             continue
         new_ds_south = get_new_dataset(datapd.iloc[i], p_nc, selected_month, southlat, dataname, newx=newx)
         if isinstance(new_ds_south, xr.Dataset):
-            new_ds_south = new_ds_south.sortby('time')
-            if (name in ['SAM0-UNICON', 'CAS-ESM2-0']) and (dataname == 'siconc'):
-                # SAM0-UNICON, CAS-ESM2-0 with one year less in mld data than in ice data
-                new_ds_south = new_ds_south.isel(time = slice(0, -1))                
             new_ds_south = new_ds_south.load()
-            if selected_month:
-                if len(new_ds_south.time) > 500:
-                    if (name in ['SAM0-UNICON']) and (dataname == 'hfds'):
-                        new_ds_south = new_ds_south
-                    else:
-                        new_ds_south = new_ds_south.isel(time = slice(-500, None))
             savepickle(name, p_save, new_ds_south)
             print("[*] Saved.")
             gc.collect()
@@ -43,30 +34,30 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
     if pd.isna(data_info[datastorename]):
         try:
             ds = read_nc_files(p_nc, name, selected_month, dataname)
-            ds = ds.sortby('time')
         except Exception as e:
             print(e)
             return None
     else:
         if data_info[datastorename][0:2] == 'gs':
             ds = open_from_cloud(data_info[datastorename]) 
-            if selected_month:
+            if selected_month>0:
                 ds = select_month(ds, selected_month)
         else:
             datafile_paths = data_info[datastorename] + '*'
             matching_files = glob.glob(datafile_paths)
-            if selected_month:
+            if selected_month>0:
                 ds = open_nc_month(matching_files, selected_month)
             else:
                 ds = open_nc(matching_files)
-            
+    ds = ds.sortby('time')
 
     dataarray = ds[dataname]
     if dataname == 'siconc':
         dataarray = dataarray.where(dataarray>=0).where(dataarray<=100)
-    elif dataname == 'so':
-        dataarray = dataarray.where(dataarray>=0).where(dataarray<100)
-    elif dataname == 'thetao':
+    elif dataname in ['so', 'sos']:
+        dataarray = dataarray.where(dataarray>=10).where(dataarray<50)
+        # E3SM missing value is 1
+    elif dataname in ['thetao', 'tos']:
         dataarray = dataarray.where(dataarray!=0).where(dataarray<100)
     elif dataname == 'hfds':
         if name == 'CAS-ESM2-0':
@@ -75,6 +66,9 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
             # should be multiplied by factor of 4.1*10^7 for unit 
             # conversion from K/s to W/m2
             dataarray = dataarray * 4.1e7
+        if name == "SAM0-UNICON":
+            # No errata info, but hfds sign should be flipped
+            dataarray = dataarray * (-1)
 
     nolatlon = False
     newlatlon = False
@@ -82,9 +76,16 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
     if (dataname in ['siconc', 'sithick']) and (name == 'NESM3'):
         newlatlon = ('lat', 'lon')
 
-    if (dataname in ['mlotst', 'thetao', 'so', 'hfds','tos','sos']) and (name == 'CAS-ESM2-0'):
-        nolatlon = True
-        newlatlon = ('lat', 'lon')
+    if name == 'CAS-ESM2-0':
+        if dataname in ['mlotst', 'thetao', 'so', 'hfds', 'tos', 'sos']:
+            # CAS-ESM2-0 sea water dataset grid different from sea ice dataset grid
+            # sea water: lat, lon;  sea ice: i, j, longitude, latitude
+            nolatlon = True
+            newlatlon = ('lat', 'lon')
+        else:
+            ## 'CAS-ESM2-0' sea water lon 0~359 ; ice lon 1~360 
+            ## shift ice data -> 0 ~ 359
+            dataarray = shift_x(dataarray)
 
     dlat, dlon = get_latlon(data_info, dataarray.isel(time=0), newlatlon, nolatlon)
     if dlat.values.flatten()[~np.isnan(dlat.values.flatten())][0]>0:
@@ -166,7 +167,7 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
                 print('    Coords match ...', end = ' ')
         else:
             if name in ['CESM2-WACCM-FV2', 'NorESM2-MM', 'NorESM2-LM','FGOALS-g3', 'CAS-ESM2-0']:
-                dataset_final = copy_xy(dlat_g, dataarray)
+                dataset_final = copy_xy(dsg_data, dataarray)
                 dataset_final = drop_coords(dataset_final)
                 new_ds = create_new_ds(dataset_final, dsg_data, dlat_g, dlon_g, dataname)
                 print('    Not match, use coords from area data ...', end = ' ')
@@ -218,7 +219,20 @@ def get_new_dataset(data_info, p_nc, selected_month, southlat, dataname, newx=Fa
     new_ds_south['newlat'] = southnewlat
     new_ds_south['newlon'] = southnewlon
     if newx: 
-        new_ds_south = change_start_x(new_ds_south, newx)   
+        new_ds_south = change_start_x(new_ds_south, newx)
+
+    if selected_month!=0:
+        if (name in ['CAS-ESM2-0']) and (dataname in ['siconc', 'sivol', 'sithick']):
+            #CAS-ESM2-0 with one year less in mld data than in ice data
+            new_ds_south = new_ds_south.isel(time = slice(0, -1))                
+        if len(new_ds_south.time) > 500:
+            # if (name in ['SAM0-UNICON']) and (dataname == 'hfds'):
+                # hfds dataset on NCAR has only 699 year (although with 700 years in names), no year 290
+                # new_ds_south = new_ds_south
+            if (name in ['ACCESS-ESM1-5']) and (dataname in ['tos', 'sos']):
+                new_ds_south = new_ds_south.isel(time = slice(-600, -100))
+            else:
+                new_ds_south = new_ds_south.isel(time = slice(-500, None))
     return new_ds_south
 
 def count_area_diff_thresholds(datapd, ice_thresholds, area_threshold, buffering, p_save, datap0, re=False):
@@ -243,7 +257,7 @@ def count_area_diff_thresholds(datapd, ice_thresholds, area_threshold, buffering
             print("[*] saved.")
             gc.collect()
 
-def polynya_detecting_mean(datapd, p_count, p_save, p_ice, area_threshold):
+def polynya_detecting_mean(datapd, p_save, p_ice, area_threshold):
     for i in range(0, len(datapd)):
         name = datapd.at[i, 'source_id']
         print("{} {} ....".format(i, name), end = ' ')
@@ -284,6 +298,24 @@ def polynya_detecting_fixed(datapd, p_save, p_ice, area_threshold, fixed_num):
         print("[*] saved.")
         gc.collect()
 
+def save_new_dataset_sithickness(datapd, p_save, p_nc, selected_month, southlat, newx=False):
+    for i in range(0, len(datapd)):
+        name = datapd.at[i, 'source_id']
+        print("{} {}".format(i, name), end = '...')
+        if ispickleexists(name, p_save):
+            print("[o] data exist.")
+            continue
+        new_ds_south = get_new_dataset(datapd.iloc[i], p_nc, selected_month, southlat, 'sithick', newx=newx)
+        if not isinstance(new_ds_south, xr.Dataset):
+            new_ds_south = get_new_dataset(datapd.iloc[i], p_nc, selected_month, southlat, 'sivol', newx=newx)
+        if isinstance(new_ds_south, xr.Dataset):
+            # if (name in ['SAM0-UNICON', 'CAS-ESM2-0']) and (dataname == 'siconc'):
+            #     # SAM0-UNICON, CAS-ESM2-0 with one year less in mld data than in ice data
+            #     new_ds_south = new_ds_south.isel(time = slice(0, -1))
+            new_ds_south = new_ds_south.load()
+            savepickle(name, p_save, new_ds_south)
+            print("[*] Saved.")
+            gc.collect()
 
 def main():
     # filter some warning messages
@@ -292,6 +324,8 @@ def main():
     
     datapd = pd.read_csv('List_model.csv')
     p_ice = '../../SO_data/data_siconc_w_area/'
+    p_sith = '../../SO_data/data_thick/'
+
     p_nc = '../../data/CMIP6/'
     selected_month = 9
     southlat = -40 
@@ -301,29 +335,32 @@ def main():
     print('Start siconc data preprocessing ...')
     # get_new_siconc_dataset(datapd, p_ice, p_nc, selected_month, southlat, newx)
     save_new_dataset(datapd, p_ice, p_nc, selected_month, southlat, dataname, newx=newx)
-
     print('Finish siconc data preprocessing.')
+
     print()
     print('Start polynya detecting ...')
     print('Count polynya area using different thresholds ...')
-
     ice_thresholds = np.arange(0, 100, step=1)
     area_threshold = [0, 2000]
     buffering = 15
     count_save = '../../SO_data/data_polynya_count/'
     count_area_diff_thresholds(datapd, ice_thresholds, area_threshold, buffering, count_save, p_ice)
-
     print('Finish polynya counting.')
-    print()
-    print('Start polynya detecting based on the ice threshold that results in maximum area...')
-    p_polynya_save = '../../SO_data/data_polynya_mean/'
-    polynya_detecting_mean(datapd, count_save, p_polynya_save, p_ice, area_threshold)
 
     print()
-    print("Start polynya detecting based on the a fixed thershold...")
-    p_polynya_save_fix = '../../SO_data/data_polynya_40/'
-    fixed_num = 40
-    polynya_detecting_fixed(datapd, p_polynya_save_fix, p_ice, area_threshold, fixed_num)
+    print('Start polynya detecting based on the ice threshold (mean SIC)')
+    p_polynya_save = '../../SO_data/data_polynya_mean/'
+    polynya_detecting_mean(datapd, p_polynya_save, p_ice, area_threshold)
+
+    # print()
+    # print("Start polynya detecting based on the a fixed thershold...")
+    # p_polynya_save_fix = '../../SO_data/data_polynya_40/'
+    # fixed_num = 40
+    # polynya_detecting_fixed(datapd, p_polynya_save_fix, p_ice, area_threshold, fixed_num)
+
+    print()
+    print('Start sea ice thickness data preprocessing ...')
+    save_new_dataset_sithickness(datapd, p_sith, p_nc, selected_month, southlat, newx=newx)
     
 if __name__ == "__main__":
     main()

@@ -2,28 +2,12 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 
-import os
+import os, glob
 import pickle
-import glob
+
 import gsw
 
 from pyproj import Geod
-
-def lighten_color(color, amount=0.5):
-    """
-    from https://stackoverflow.com/questions/37765197/darken-or-lighten-a-color-in-matplotlib
-    Lightens the given color by multiplying (1-luminosity) by the given amount.
-    Input can be matplotlib color string, hex string, or RGB tuple.
-    
-    Examples:
-    >> lighten_color('g', 0.3)
-    >> lighten_color('#F034A3', 0.6)
-    >> lighten_color((.3,.55,.1), 0.5)
-    """
-    import matplotlib.colors as mcolors
-    import colorsys
-    c = np.array(colorsys.rgb_to_hls(*mcolors.to_rgb(color)))
-    return colorsys.hls_to_rgb(c[0],1-amount * (1-c[1]),c[2])
 
 def ispickleexists(n, p0):
     """
@@ -212,11 +196,10 @@ def read_nc_files(p_nc, name, selected_month, dataname):
     - If `selected_month` is provided and `name` is 'CanESM5-1', a temporary file is created and used for further processing.
     - The function uses `glob` to find matching files based on the constructed file path pattern.
     """
-    import glob, os
     data_path = p_nc + dataname + '_*' + name + '_piControl_' + '*' + '.nc'
     matching_files = glob.glob(data_path)
     if len(matching_files) > 0:
-        if selected_month:
+        if selected_month>0:
             if  name == 'CanESM5-1':
                 open_nc_month_save_temp(matching_files, selected_month)
                 data_path_new = p_nc + dataname + '_*' + name + '_piControl_' + '*' + '_temp.nc'
@@ -307,7 +290,6 @@ def read_areacello(p_nc, name, var, data_info):
     Raises:
     ValueError: If no matching files or multiple matching files are found.
     """
-    import glob
     grid_path = p_nc + var + '_Ofx_' + name + '_*' + '.nc'
     matching_gfiles = glob.glob(grid_path)
     if len(matching_gfiles)==1:
@@ -777,12 +759,11 @@ def set_ocean_to_zero(ds):
 def shift_x(da):
     ## only for 'CAS-ESM2-0'
     ## area lon 0~359 ; ice lon 1~360 
-    ## first modify the lon in areadata
-    ## NOTE: no need, those two actually match
-    a = da.isel({da.dims[1]:0})  # select lon=0
-    a[da.dims[1]] = da[da.dims[1]][0].values+360  # resign lon = 360 to lon=0 
-    b = da.sel({da.dims[1]:slice(1, None)})  # select lon = 1~359
-    new = xr.concat([b, a], dim=da.dims[1])  # combine 1~359 & 360
+    ## shift ice data -> 0 ~ 359
+    a = da.isel({da.dims[-1]:-1}) # select lon=360
+    a[da.dims[-1]] = da[da.dims[-1]][-1].values - 360  # resign lon = 360 dim value
+    b = da.isel({da.dims[-1]:slice(0, -1)})  # select lon = 1~359
+    new = xr.concat([a, b], dim=da.dims[-1])  # combine 0 & 1~359 
     return new
 
 def change_start_x(ds, newx):
@@ -867,9 +848,8 @@ def connect_dask_cluster():
     client = Client(cluster)
     return client, cluster
 
-def ReadDataFromNCAR(url = '/glade/collections/cmip/catalog/intake-esm-datastore/catalogs/glade-cmip6.json', show_only=False, **kwargs):
-    import intake
-    cat = intake.open_esm_datastore(url)
+
+def ReadDataFromCat(cat, **kwargs):
     query = {}
     for key, value in kwargs.items():
         if value is None:
@@ -880,6 +860,13 @@ def ReadDataFromNCAR(url = '/glade/collections/cmip/catalog/intake-esm-datastore
     if 'source_id' not in kwargs:
         query['source_id'] = 'GFDL-CM4'
     cat_subset = cat.search(**query)
+    return cat_subset
+
+
+def ReadDataFromNCAR(url = '/glade/collections/cmip/catalog/intake-esm-datastore/catalogs/glade-cmip6.json', show_only=False, **kwargs):
+    import intake
+    cat = intake.open_esm_datastore(url)
+    cat_subset = ReadDataFromCat(cat, **kwargs)
     if show_only:
         return cat_subset.df
     else:
